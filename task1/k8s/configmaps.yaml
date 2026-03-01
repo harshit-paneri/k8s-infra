@@ -1,0 +1,32 @@
+# ConfigMap for backend API configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: dodo-app
+  labels:
+    app: backend
+    app.kubernetes.io/part-of: dodo-payments
+data:
+  APP_NAME: "dodo-payments-api"
+  APP_VERSION: "1.0.0"
+  ENVIRONMENT: "production"
+  DB_HOST: "postgresql-service"
+  DB_PORT: "5432"
+  DB_NAME: "dodo_payments"
+  ENABLE_TRACING: "true"
+  JAEGER_HOST: "jaeger-collector.monitoring.svc.cluster.local"
+  JAEGER_PORT: "6831"
+
+---
+# ConfigMap for frontend Nginx configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: dodo-app
+  labels:
+    app: frontend
+    app.kubernetes.io/part-of: dodo-payments
+data:
+  REACT_APP_API_URL: "/api"

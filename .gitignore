@@ -1,0 +1,51 @@
+# ── Assignment Document (confidential) ──────────────
+Dodo_Payments_DevOps_Security_Engineer_Assignment.docx
+
+# ── Credentials / Secrets ───────────────────────────
+*.pem
+*.key
+*.crt
+*.env
+.env.*
+*-secret.yaml
+secrets.yaml
+vault-policy.hcl
+
+# ── OS / Editor ─────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Docker ──────────────────────────────────────────
+docker-compose.override.yml
+
+# ── Python ──────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+
+# ── Node.js ─────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# ── Terraform (if used) ────────────────────────────
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# ── Kubeconfig ──────────────────────────────────────
+kubeconfig
+*.kubeconfig

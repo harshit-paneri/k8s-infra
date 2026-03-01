@@ -1,0 +1,131 @@
+# ═══════════════════════════════════════════════════════════════════
+# Pod Security Standards (PSS) Enforcement
+# ═══════════════════════════════════════════════════════════════════
+# Enforces the "restricted" PSS profile at the namespace level.
+# This prevents: privileged containers, host networking, root users,
+# writable root FS, privilege escalation, etc.
+# ═══════════════════════════════════════════════════════════════════
+
+# Namespace with PSS labels
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dodo-app
+  labels:
+    app.kubernetes.io/part-of: dodo-payments
+    # ── Pod Security Labels ──────────────────────────────────
+    # enforce: reject pods that violate the policy
+    # audit:   log violations to audit log
+    # warn:    show warnings to users on kubectl
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.28
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: v1.28
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: v1.28
+
+---
+# ═══════════════════════════════════════════════════════════════════
+# OPA Gatekeeper Constraints
+# ═══════════════════════════════════════════════════════════════════
+# Additional policies beyond PSS for defense-in-depth.
+# Requires OPA Gatekeeper to be installed in the cluster.
+# ═══════════════════════════════════════════════════════════════════
+
+# ─── Constraint Template: Require Labels ──────────────────────────
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequiredlabels
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequiredLabels
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            labels:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srequiredlabels
+        violation[{"msg": msg}] {
+          provided := {label | input.review.object.metadata.labels[label]}
+          required := {label | label := input.parameters.labels[_]}
+          missing := required - provided
+          count(missing) > 0
+          msg := sprintf("Missing required labels: %v", [missing])
+        }
+
+---
+# Enforce: All pods must have app.kubernetes.io/part-of label
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequiredLabels
+metadata:
+  name: require-part-of-label
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    namespaces: ["dodo-app"]
+  parameters:
+    labels:
+      - "app.kubernetes.io/part-of"
+
+---
+# ─── Constraint Template: Block Latest Tag ────────────────────────
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8sdisallowedtags
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sDisallowedTags
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            tags:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8sdisallowedtags
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          tag := split(container.image, ":")[1]
+          disallowed := input.parameters.tags[_]
+          tag == disallowed
+          msg := sprintf("Container '%v' uses disallowed tag: %v", [container.name, tag])
+        }
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not contains(container.image, ":")
+          msg := sprintf("Container '%v' has no tag specified (implicit ':latest')", [container.name])
+        }
+
+---
+# Enforce: No :latest tags in production
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sDisallowedTags
+metadata:
+  name: disallow-latest-tag
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    namespaces: ["dodo-app"]
+  parameters:
+    tags:
+      - "latest"

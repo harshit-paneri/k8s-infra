@@ -1,0 +1,178 @@
+# ═══════════════════════════════════════════════════════════════════
+# Grafana Dashboard — Dodo Payments Application Overview
+# ═══════════════════════════════════════════════════════════════════
+# This ConfigMap provides the dashboard JSON to Grafana.
+# Import via Grafana provisioning system.
+# ═══════════════════════════════════════════════════════════════════
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dodo-dashboards
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  dodo-overview.json: |
+    {
+      "dashboard": {
+        "title": "Dodo Payments - Overview",
+        "tags": ["dodo", "payments"],
+        "timezone": "browser",
+        "refresh": "10s",
+        "panels": [
+          {
+            "title": "Request Rate (req/s)",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+            "targets": [
+              {
+                "expr": "sum(rate(http_requests_total{namespace=\"dodo-app\"}[5m])) by (endpoint)",
+                "legendFormat": "{{ endpoint }}"
+              }
+            ]
+          },
+          {
+            "title": "Error Rate (%)",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+            "targets": [
+              {
+                "expr": "sum(rate(http_requests_total{namespace=\"dodo-app\", status=~\"5..\"}[5m])) / sum(rate(http_requests_total{namespace=\"dodo-app\"}[5m])) * 100",
+                "legendFormat": "5xx Error Rate"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "thresholds": {
+                  "steps": [
+                    { "value": 0, "color": "green" },
+                    { "value": 1, "color": "yellow" },
+                    { "value": 5, "color": "red" }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "title": "Latency P50 / P95 / P99",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{namespace=\"dodo-app\"}[5m])) by (le))",
+                "legendFormat": "P50"
+              },
+              {
+                "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{namespace=\"dodo-app\"}[5m])) by (le))",
+                "legendFormat": "P95"
+              },
+              {
+                "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{namespace=\"dodo-app\"}[5m])) by (le))",
+                "legendFormat": "P99"
+              }
+            ]
+          },
+          {
+            "title": "Transactions Processed",
+            "type": "stat",
+            "gridPos": { "h": 8, "w": 6, "x": 12, "y": 8 },
+            "targets": [
+              {
+                "expr": "sum(transactions_total{namespace=\"dodo-app\"})",
+                "legendFormat": "Total"
+              }
+            ]
+          },
+          {
+            "title": "Transaction Success Rate",
+            "type": "gauge",
+            "gridPos": { "h": 8, "w": 6, "x": 18, "y": 8 },
+            "targets": [
+              {
+                "expr": "sum(transactions_total{namespace=\"dodo-app\", status=\"completed\"}) / sum(transactions_total{namespace=\"dodo-app\"}) * 100",
+                "legendFormat": "Success %"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "min": 0,
+                "max": 100,
+                "thresholds": {
+                  "steps": [
+                    { "value": 0, "color": "red" },
+                    { "value": 95, "color": "yellow" },
+                    { "value": 99, "color": "green" }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "title": "Pod CPU Usage",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+            "targets": [
+              {
+                "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"dodo-app\"}[5m])) by (pod)",
+                "legendFormat": "{{ pod }}"
+              }
+            ]
+          },
+          {
+            "title": "Pod Memory Usage",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+            "targets": [
+              {
+                "expr": "sum(container_memory_usage_bytes{namespace=\"dodo-app\"}) by (pod)",
+                "legendFormat": "{{ pod }}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": { "unit": "bytes" }
+            }
+          },
+          {
+            "title": "HPA Current vs Desired Replicas",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+            "targets": [
+              {
+                "expr": "kube_horizontalpodautoscaler_status_current_replicas{namespace=\"dodo-app\"}",
+                "legendFormat": "Current - {{ horizontalpodautoscaler }}"
+              },
+              {
+                "expr": "kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"dodo-app\"}",
+                "legendFormat": "Desired - {{ horizontalpodautoscaler }}"
+              }
+            ]
+          },
+          {
+            "title": "PVC Usage",
+            "type": "gauge",
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+            "targets": [
+              {
+                "expr": "kubelet_volume_stats_used_bytes{namespace=\"dodo-app\"} / kubelet_volume_stats_capacity_bytes{namespace=\"dodo-app\"} * 100",
+                "legendFormat": "{{ persistentvolumeclaim }}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "min": 0,
+                "max": 100,
+                "unit": "percent",
+                "thresholds": {
+                  "steps": [
+                    { "value": 0, "color": "green" },
+                    { "value": 75, "color": "yellow" },
+                    { "value": 90, "color": "red" }
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      }
+    }

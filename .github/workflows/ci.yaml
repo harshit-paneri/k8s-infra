@@ -1,0 +1,199 @@
+# ═══════════════════════════════════════════════════════════════════
+# Dodo Payments — CI Pipeline
+# ═══════════════════════════════════════════════════════════════════
+# Runs on every push/PR to main: Lint → Test → Build → Push → Scan
+# ═══════════════════════════════════════════════════════════════════
+
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'task1/frontend/**'
+      - 'task1/backend/**'
+      - '.github/workflows/ci.yaml'
+  pull_request:
+    branches: [main]
+
+env:
+  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  # ── Stage 1: Lint & Static Analysis ────────────────────────────
+  lint:
+    name: 🔍 Lint & Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Lint Backend (Python)
+        run: |
+          cd task1/backend
+          pip install flake8 black isort
+          echo "── Checking code style with Black ──"
+          black --check --diff .
+          echo "── Checking imports with isort ──"
+          isort --check-only --diff .
+          echo "── Running flake8 ──"
+          flake8 . --max-line-length=120 --statistics
+
+      - name: Lint Frontend (JavaScript)
+        run: |
+          cd task1/frontend
+          npm ci
+          npm run lint || true
+
+  # ── Stage 2: Unit & Integration Tests ──────────────────────────
+  test:
+    name: 🧪 Tests
+    needs: lint
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: test_dodo_payments
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Backend Tests
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: test_dodo_payments
+          DB_USER: postgres
+          DB_PASSWORD: testpassword
+        run: |
+          cd task1/backend
+          pip install -r requirements.txt
+          pytest --cov=app --cov-report=xml --cov-report=term-missing -v
+
+      - name: Upload Coverage Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: task1/backend/coverage.xml
+
+  # ── Stage 3: Build & Push Docker Images ────────────────────────
+  build-and-push:
+    name: 🐳 Build & Push Images
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Build & Push Backend
+        uses: docker/build-push-action@v5
+        with:
+          context: task1/backend
+          push: true
+          tags: |
+            ${{ env.DOCKER_USERNAME }}/dodo-backend:${{ env.IMAGE_TAG }}
+            ${{ env.DOCKER_USERNAME }}/dodo-backend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build & Push Frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: task1/frontend
+          push: true
+          tags: |
+            ${{ env.DOCKER_USERNAME }}/dodo-frontend:${{ env.IMAGE_TAG }}
+            ${{ env.DOCKER_USERNAME }}/dodo-frontend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Stage 4: Security Scan (Bonus) ────────────────────────────
+  security-scan:
+    name: 🛡️ Security Scan (Trivy)
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan Backend Image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.DOCKER_USERNAME }}/dodo-backend:${{ env.IMAGE_TAG }}
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+
+      - name: Scan Frontend Image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.DOCKER_USERNAME }}/dodo-frontend:${{ env.IMAGE_TAG }}
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+
+  # ── Stage 5: Update K8s Manifests (Trigger ArgoCD Sync) ───────
+  update-manifests:
+    name: 📦 Update K8s Manifests
+    needs: [build-and-push, security-scan]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update image tags in manifests
+        run: |
+          # Update backend image
+          sed -i "s|image: .*dodo-backend:.*|image: ${{ env.DOCKER_USERNAME }}/dodo-backend:${{ env.IMAGE_TAG }}|" \
+            task1/k8s/backend.yaml
+
+          # Update frontend image
+          sed -i "s|image: .*dodo-frontend:.*|image: ${{ env.DOCKER_USERNAME }}/dodo-frontend:${{ env.IMAGE_TAG }}|" \
+            task1/k8s/frontend.yaml
+
+      - name: Commit and push manifest updates
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add task1/k8s/
+          git diff --staged --quiet || git commit -m "ci: update image tags to ${{ env.IMAGE_TAG }}"
+          git push

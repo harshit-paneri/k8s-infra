@@ -1,0 +1,88 @@
+# Frontend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: dodo-app
+  labels:
+    app: frontend
+    app.kubernetes.io/part-of: dodo-payments
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: frontend
+        app.kubernetes.io/part-of: dodo-payments
+    spec:
+      containers:
+        - name: frontend
+          image: dodopayacr.azurecr.io/dodo-frontend:v1
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+              name: http
+          # ── Resource Limits ─────────────────────────────────
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          # ── Health Probes ───────────────────────────────────
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 6     # 5s + 6*5s = 35s max startup
+          # ── Security Context ────────────────────────────────
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+
+---
+# Frontend ClusterIP Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: dodo-app
+  labels:
+    app: frontend
+    app.kubernetes.io/part-of: dodo-payments
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+      name: http

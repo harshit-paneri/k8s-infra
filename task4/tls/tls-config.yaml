@@ -1,0 +1,96 @@
+# ═══════════════════════════════════════════════════════════════════
+# TLS / mTLS Configuration with cert-manager
+# ═══════════════════════════════════════════════════════════════════
+# cert-manager automates TLS certificate lifecycle.
+# We create a self-signed CA for the assessment, and issue
+# certificates for Ingress TLS termination.
+# ═══════════════════════════════════════════════════════════════════
+
+# Install cert-manager:
+# kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.0/cert-manager.yaml
+
+---
+# ─── Self-Signed ClusterIssuer ────────────────────────────────────
+# For assessment; in production, use Let's Encrypt or a private CA
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-issuer
+spec:
+  selfSigned: {}
+
+---
+# ─── CA Certificate ──────────────────────────────────────────────
+# Create a CA cert using the self-signed issuer
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: dodo-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: dodo-ca
+  secretName: dodo-ca-secret
+  duration: 8760h     # 1 year
+  renewBefore: 720h   # Renew 30 days before expiry
+  issuerRef:
+    name: selfsigned-issuer
+    kind: ClusterIssuer
+    group: cert-manager.io
+
+---
+# ─── CA Issuer ────────────────────────────────────────────────────
+# Issue certificates signed by our CA
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: dodo-ca-issuer
+spec:
+  ca:
+    secretName: dodo-ca-secret
+
+---
+# ─── Ingress TLS Certificate ─────────────────────────────────────
+# Certificate for the Ingress (HTTPS)
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: dodo-tls
+  namespace: dodo-app
+spec:
+  secretName: dodo-tls-secret
+  duration: 2160h      # 90 days
+  renewBefore: 360h    # Renew 15 days before
+  isCA: false
+  privateKey:
+    algorithm: RSA
+    encoding: PKCS1
+    size: 2048
+  usages:
+    - server auth
+    - client auth
+  dnsNames:
+    - dodo.example.com
+    - "*.dodo.example.com"
+  issuerRef:
+    name: dodo-ca-issuer
+    kind: ClusterIssuer
+    group: cert-manager.io
+
+---
+# ─── Let's Encrypt Issuer (Production Alternative) ───────────────
+# Uncomment for real TLS certificates
+# apiVersion: cert-manager.io/v1
+# kind: ClusterIssuer
+# metadata:
+#   name: letsencrypt-prod
+# spec:
+#   acme:
+#     server: https://acme-v02.api.letsencrypt.org/directory
+#     email: devops@dodo.com
+#     privateKeySecretRef:
+#       name: letsencrypt-prod-key
+#     solvers:
+#       - http01:
+#           ingress:
+#             class: nginx

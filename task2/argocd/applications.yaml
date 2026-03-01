@@ -1,0 +1,80 @@
+# ═══════════════════════════════════════════════════════════════════
+# ArgoCD Application — Staging Environment
+# ═══════════════════════════════════════════════════════════════════
+# ArgoCD watches the Git repo and auto-syncs K8s manifests to staging.
+# This is the GitOps approach — Git is the single source of truth.
+# ═══════════════════════════════════════════════════════════════════
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dodo-staging
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: dodo-payments
+    environment: staging
+  # Finalizer ensures ArgoCD cleans up resources on app deletion
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/<your-username>/devops-k8s.git
+    targetRevision: main
+    path: task1/k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dodo-staging
+  syncPolicy:
+    automated:
+      prune: true         # Delete resources removed from Git
+      selfHeal: true      # Revert manual changes to match Git
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        maxDuration: 3m0s
+        factor: 2
+
+---
+# ═══════════════════════════════════════════════════════════════════
+# ArgoCD Application — Production Environment
+# ═══════════════════════════════════════════════════════════════════
+# Production requires manual sync (safety measure).
+# ═══════════════════════════════════════════════════════════════════
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dodo-production
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: dodo-payments
+    environment: production
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/<your-username>/devops-k8s.git
+    targetRevision: main
+    path: task1/k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dodo-app
+  syncPolicy:
+    # Production: manual sync for safety (no automated block)
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        maxDuration: 3m0s
+        factor: 2

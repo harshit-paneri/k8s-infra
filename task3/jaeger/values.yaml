@@ -1,0 +1,39 @@
+# Jaeger All-in-One Helm values — distributed tracing
+# All-in-One mode is suitable for dev/assessment (not production)
+
+provisionDataStore:
+  cassandra: false
+
+allInOne:
+  enabled: true
+  replicas: 1
+  image: jaegertracing/all-in-one
+  tag: "1.53"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 300m
+      memory: 512Mi
+
+storage:
+  type: memory
+
+query:
+  enabled: false   # Included in all-in-one
+
+collector:
+  enabled: false   # Included in all-in-one
+
+agent:
+  enabled: false   # Included in all-in-one
+
+# Ingress for Jaeger UI
+ingress:
+  enabled: true
+  ingressClassName: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+  hosts:
+    - jaeger.dodo.example.com

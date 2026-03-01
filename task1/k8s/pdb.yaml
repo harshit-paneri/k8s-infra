@@ -1,0 +1,33 @@
+# Pod Disruption Budgets — guarantee minimum availability during voluntary disruptions
+# (node drains, cluster upgrades, scaling operations)
+
+# Frontend PDB — at least 1 pod always available
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: frontend-pdb
+  namespace: dodo-app
+  labels:
+    app: frontend
+    app.kubernetes.io/part-of: dodo-payments
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: frontend
+
+---
+# Backend PDB — at least 2 pods always available
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backend-pdb
+  namespace: dodo-app
+  labels:
+    app: backend
+    app.kubernetes.io/part-of: dodo-payments
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: backend

@@ -1,0 +1,137 @@
+# ═══════════════════════════════════════════════════════════════════
+# RBAC — Role-Based Access Control for Dodo Payments
+# ═══════════════════════════════════════════════════════════════════
+# Three personas: developer (read-only), operator (manage workloads),
+# admin (full cluster access). Follows least-privilege principle.
+# ═══════════════════════════════════════════════════════════════════
+
+# ─── Developer Role (Namespace-scoped) ───────────────────────────
+# Can view pods, logs, services, configmaps. No mutations, no secrets.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: developer
+  namespace: dodo-app
+  labels:
+    app.kubernetes.io/part-of: dodo-payments
+    rbac.dodo.io/persona: developer
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "services", "configmaps", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+
+---
+# ─── Operator Role (Namespace-scoped) ────────────────────────────
+# Can manage deployments, services, configmaps, scaling, rollouts.
+# Can view secrets but not create/delete them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: operator
+  namespace: dodo-app
+  labels:
+    app.kubernetes.io/part-of: dodo-payments
+    rbac.dodo.io/persona: operator
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "services", "configmaps", "events"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["update", "patch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch"]
+
+---
+# ─── Admin ClusterRole ───────────────────────────────────────────
+# Cluster-wide admin with full access to namespaces, nodes, RBAC.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dodo-admin
+  labels:
+    app.kubernetes.io/part-of: dodo-payments
+    rbac.dodo.io/persona: admin
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["*"]
+  - nonResourceURLs: ["*"]
+    verbs: ["*"]
+
+---
+# ═══════════════════════════════════════════════════════════════════
+# RoleBindings — Bind users/groups to roles
+# ═══════════════════════════════════════════════════════════════════
+
+# Developer binding (example user)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: developer-binding
+  namespace: dodo-app
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: developer
+subjects:
+  - kind: Group
+    name: developers
+    apiGroup: rbac.authorization.k8s.io
+  # Individual user example
+  - kind: User
+    name: dev@dodo.com
+    apiGroup: rbac.authorization.k8s.io
+
+---
+# Operator binding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: operator-binding
+  namespace: dodo-app
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: operator
+subjects:
+  - kind: Group
+    name: operators
+    apiGroup: rbac.authorization.k8s.io
+
+---
+# Admin binding (ClusterRoleBinding)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dodo-admin-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: dodo-admin
+subjects:
+  - kind: Group
+    name: admins
+    apiGroup: rbac.authorization.k8s.io

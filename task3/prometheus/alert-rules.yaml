@@ -1,0 +1,153 @@
+# ═══════════════════════════════════════════════════════════════════
+# Prometheus Alert Rules for Dodo Payments
+# ═══════════════════════════════════════════════════════════════════
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: dodo-alert-rules
+  namespace: monitoring
+  labels:
+    app: kube-prometheus-stack
+    release: monitoring
+spec:
+  groups:
+    # ── Application Alerts ─────────────────────────────────────────
+    - name: dodo-application
+      rules:
+        - alert: HighErrorRate
+          expr: |
+            (
+              sum(rate(http_requests_total{status=~"5..", namespace="dodo-app"}[5m]))
+              /
+              sum(rate(http_requests_total{namespace="dodo-app"}[5m]))
+            ) > 0.01
+          for: 2m
+          labels:
+            severity: critical
+            team: backend
+          annotations:
+            summary: "High HTTP error rate (> 1%) in dodo-app"
+            description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes."
+            runbook: "Check backend logs: kubectl logs -l app=backend -n dodo-app --tail=100"
+
+        - alert: HighLatencyP99
+          expr: |
+            histogram_quantile(0.99,
+              sum(rate(http_request_duration_seconds_bucket{namespace="dodo-app"}[5m])) by (le)
+            ) > 0.5
+          for: 5m
+          labels:
+            severity: warning
+            team: backend
+          annotations:
+            summary: "P99 latency > 500ms in dodo-app"
+            description: "P99 latency is {{ $value }}s. Check for slow queries or resource exhaustion."
+
+        - alert: LowRequestRate
+          expr: |
+            sum(rate(http_requests_total{namespace="dodo-app"}[5m])) == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "No requests to dodo-app for 5 minutes"
+            description: "The application may be unreachable."
+
+    # ── Kubernetes Alerts ──────────────────────────────────────────
+    - name: dodo-kubernetes
+      rules:
+        - alert: PodCrashLooping
+          expr: |
+            rate(kube_pod_container_status_restarts_total{namespace="dodo-app"}[15m]) * 60 * 5 > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Pod {{ $labels.pod }} is crash-looping"
+            description: "Pod has restarted {{ $value }} times in the last 15 minutes."
+            runbook: "kubectl describe pod {{ $labels.pod }} -n dodo-app && kubectl logs {{ $labels.pod }} -n dodo-app --previous"
+
+        - alert: PodNotReady
+          expr: |
+            kube_pod_status_ready{namespace="dodo-app", condition="true"} == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Pod {{ $labels.pod }} is not ready"
+
+        - alert: DeploymentReplicasMismatch
+          expr: |
+            kube_deployment_spec_replicas{namespace="dodo-app"}
+            !=
+            kube_deployment_status_ready_replicas{namespace="dodo-app"}
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Deployment {{ $labels.deployment }} has mismatched replicas"
+            description: "Expected {{ $value }} but some replicas are not ready."
+
+        - alert: HPAAtMaxCapacity
+          expr: |
+            kube_horizontalpodautoscaler_status_current_replicas{namespace="dodo-app"}
+            ==
+            kube_horizontalpodautoscaler_spec_max_replicas{namespace="dodo-app"}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "HPA {{ $labels.horizontalpodautoscaler }} is at max capacity"
+            description: "Consider increasing max replicas or optimizing the application."
+
+    # ── Infrastructure Alerts ──────────────────────────────────────
+    - name: dodo-infrastructure
+      rules:
+        - alert: HighCPUUsage
+          expr: |
+            (
+              sum(rate(container_cpu_usage_seconds_total{namespace="dodo-app"}[5m])) by (pod)
+              /
+              sum(kube_pod_container_resource_limits{namespace="dodo-app", resource="cpu"}) by (pod)
+            ) > 0.85
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Pod {{ $labels.pod }} CPU usage > 85%"
+
+        - alert: HighMemoryUsage
+          expr: |
+            (
+              sum(container_memory_usage_bytes{namespace="dodo-app"}) by (pod)
+              /
+              sum(kube_pod_container_resource_limits{namespace="dodo-app", resource="memory"}) by (pod)
+            ) > 0.85
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Pod {{ $labels.pod }} memory usage > 85%"
+
+        - alert: PersistentVolumeAlmostFull
+          expr: |
+            (
+              kubelet_volume_stats_used_bytes{namespace="dodo-app"}
+              /
+              kubelet_volume_stats_capacity_bytes{namespace="dodo-app"}
+            ) > 0.85
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "PV {{ $labels.persistentvolumeclaim }} is > 85% full"
+            description: "Current usage: {{ $value | humanizePercentage }}. Expand or clean up data."
+
+        - alert: NodeNotReady
+          expr: kube_node_status_condition{condition="Ready", status="true"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Node {{ $labels.node }} is not ready"

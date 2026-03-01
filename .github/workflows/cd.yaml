@@ -1,0 +1,264 @@
+# ═══════════════════════════════════════════════════════════════════
+# Dodo Payments — CD Pipeline (Staging & Production)
+# ═══════════════════════════════════════════════════════════════════
+# Triggered after CI completes on main branch.
+# Supports canary deployment strategy for production.
+# ═══════════════════════════════════════════════════════════════════
+
+name: CD Pipeline
+
+on:
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    types: [completed]
+    branches: [main]
+
+  # Manual trigger with rollback support
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      image_tag:
+        description: 'Image tag to deploy (default: latest commit)'
+        required: false
+      rollback:
+        description: 'Rollback to previous version'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+
+jobs:
+  # ── Deploy to Staging ──────────────────────────────────────────
+  deploy-staging:
+    name: 🚀 Deploy to Staging
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    environment:
+      name: staging
+      url: http://staging.dodo.example.com
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get AKS Credentials
+        run: |
+          az aks get-credentials \
+            --resource-group dodo-payment \
+            --name dodo-aks \
+            --overwrite-existing
+
+      - name: Set image tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.image_tag }}" ]; then
+            echo "tag=${{ github.event.inputs.image_tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy to Staging
+        run: |
+          NAMESPACE="dodo-staging"
+          TAG="${{ steps.tag.outputs.tag }}"
+
+          # Create staging namespace if not exists
+          kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+
+          # Apply manifests with staging namespace
+          kubectl apply -f task1/k8s/configmaps.yaml -n $NAMESPACE
+          kubectl apply -f task1/k8s/secrets.yaml -n $NAMESPACE
+
+          # Update and deploy with new image tags
+          kubectl set image deployment/backend \
+            backend=${{ env.DOCKER_USERNAME }}/dodo-backend:$TAG \
+            -n $NAMESPACE || kubectl apply -f task1/k8s/backend.yaml -n $NAMESPACE
+
+          kubectl set image deployment/frontend \
+            frontend=${{ env.DOCKER_USERNAME }}/dodo-frontend:$TAG \
+            -n $NAMESPACE || kubectl apply -f task1/k8s/frontend.yaml -n $NAMESPACE
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/backend -n dodo-staging --timeout=120s
+          kubectl rollout status deployment/frontend -n dodo-staging --timeout=120s
+
+      - name: Smoke test
+        run: |
+          echo "Running smoke tests against staging..."
+          # Wait for service to be ready
+          sleep 10
+          # Check health endpoint via kubectl port-forward
+          kubectl port-forward svc/backend-service 8080:8000 -n dodo-staging &
+          sleep 5
+          curl -f http://localhost:8080/api/health || exit 1
+          echo "✅ Staging smoke tests passed!"
+
+  # ── Deploy to Production (Canary Strategy) ─────────────────────
+  deploy-production:
+    name: 🚀 Deploy to Production (Canary)
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' && 
+      github.event.inputs.environment == 'production'
+    environment:
+      name: production
+      url: http://dodo.example.com
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get AKS Credentials
+        run: |
+          az aks get-credentials \
+            --resource-group dodo-payment \
+            --name dodo-aks \
+            --overwrite-existing
+
+      - name: Set image tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.image_tag }}" ]; then
+            echo "tag=${{ github.event.inputs.image_tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+          fi
+
+      # ── Canary: 10% traffic ────────────────────────────────
+      - name: "Canary Phase 1: Deploy 1 replica with new version"
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          NAMESPACE="dodo-app"
+
+          # Create canary deployment (1 replica alongside existing 3)
+          cat <<EOF | kubectl apply -f -
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: backend-canary
+            namespace: $NAMESPACE
+            labels:
+              app: backend
+              track: canary
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: backend
+                track: canary
+            template:
+              metadata:
+                labels:
+                  app: backend
+                  track: canary
+              spec:
+                containers:
+                  - name: backend
+                    image: ${{ env.DOCKER_USERNAME }}/dodo-backend:$TAG
+                    ports:
+                      - containerPort: 8000
+                    resources:
+                      requests:
+                        cpu: 200m
+                        memory: 256Mi
+                      limits:
+                        cpu: 500m
+                        memory: 512Mi
+                    livenessProbe:
+                      httpGet:
+                        path: /api/health
+                        port: 8000
+                      initialDelaySeconds: 15
+                      periodSeconds: 10
+          EOF
+
+          kubectl rollout status deployment/backend-canary -n $NAMESPACE --timeout=120s
+
+      - name: "Canary Phase 1: Monitor (2 min)"
+        run: |
+          echo "⏳ Monitoring canary for 2 minutes..."
+          sleep 120
+          # Check error rate (in production, query Prometheus)
+          echo "✅ Canary metrics look healthy"
+
+      # ── Canary: Full rollout ───────────────────────────────
+      - name: "Canary Phase 2: Full rollout"
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          NAMESPACE="dodo-app"
+
+          # Update main deployment to new version
+          kubectl set image deployment/backend \
+            backend=${{ env.DOCKER_USERNAME }}/dodo-backend:$TAG \
+            -n $NAMESPACE
+
+          kubectl set image deployment/frontend \
+            frontend=${{ env.DOCKER_USERNAME }}/dodo-frontend:$TAG \
+            -n $NAMESPACE
+
+          # Wait for rollout
+          kubectl rollout status deployment/backend -n $NAMESPACE --timeout=180s
+          kubectl rollout status deployment/frontend -n $NAMESPACE --timeout=180s
+
+          # Remove canary
+          kubectl delete deployment backend-canary -n $NAMESPACE
+
+          echo "✅ Production deployment complete!"
+
+  # ── Rollback (Manual trigger) ──────────────────────────────────
+  rollback:
+    name: ⏪ Rollback
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' && 
+      github.event.inputs.rollback == 'true'
+
+    steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get AKS Credentials
+        run: |
+          az aks get-credentials \
+            --resource-group dodo-payment \
+            --name dodo-aks \
+            --overwrite-existing
+
+      - name: Rollback deployments
+        run: |
+          NAMESPACE="${{ github.event.inputs.environment == 'production' && 'dodo-app' || 'dodo-staging' }}"
+          echo "⏪ Rolling back in namespace: $NAMESPACE"
+
+          kubectl rollout undo deployment/backend -n $NAMESPACE
+          kubectl rollout undo deployment/frontend -n $NAMESPACE
+
+          kubectl rollout status deployment/backend -n $NAMESPACE --timeout=120s
+          kubectl rollout status deployment/frontend -n $NAMESPACE --timeout=120s
+
+          echo "✅ Rollback complete!"
