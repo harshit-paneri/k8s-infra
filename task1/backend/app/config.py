@@ -1,6 +1,7 @@
 """Application configuration loaded from environment variables."""
 
 import os
+from urllib.parse import quote_plus
 
 
 class Settings:
@@ -20,8 +21,10 @@ class Settings:
 
     @property
     def database_url(self) -> str:
+        # URL-encode password to handle special chars like @
+        encoded_password = quote_plus(self.DB_PASSWORD)
         return (
-            f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}"
+            f"postgresql://{self.DB_USER}:{encoded_password}"
             f"@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
         )
 

@@ -14,7 +14,7 @@ from typing import List
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 from starlette.responses import Response
 
@@ -113,7 +113,7 @@ async def metrics_middleware(request: Request, call_next):
 def health_check(db: Session = Depends(get_db)):
     """Health check endpoint for Kubernetes probes."""
     try:
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         db_status = "connected"
     except Exception:
         db_status = "disconnected"
@@ -130,7 +130,7 @@ def health_check(db: Session = Depends(get_db)):
 def readiness_check(db: Session = Depends(get_db)):
     """Readiness probe — checks database connectivity."""
     try:
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         return {"status": "ready"}
     except Exception as e:
         logger.error("readiness_check_failed", error=str(e))

@@ -29,7 +29,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: dodopayacr.azurecr.io/dodo-backend:v1
+          image: dodopayacr.azurecr.io/dodo-backend:v4
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
@@ -84,8 +84,13 @@ spec:
           # ── Security Context ────────────────────────────────
           securityContext:
             runAsNonRoot: true
+            runAsUser: 10001
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           volumeMounts:
             - name: tmp
               mountPath: /tmp
