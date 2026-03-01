@@ -97,7 +97,7 @@ metadata:
     app: frontend
     app.kubernetes.io/part-of: dodo-payments
 spec:
-  type: ClusterIP
+  type: LoadBalancer
   selector:
     app: frontend
   ports:
