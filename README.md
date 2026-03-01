@@ -1,4 +1,4 @@
-# 🏗️ Dodo Payments — DevOps & Security Engineer Assessment
+# 🏗️ K8S Infra
 
 > Production-grade Kubernetes infrastructure on Azure AKS with microservices, CI/CD, observability, security hardening, and Istio service mesh knowledge.
 
